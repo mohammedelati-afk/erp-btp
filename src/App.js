@@ -498,7 +498,7 @@ export default function App() {
   const [online, setOnline] = useState(true);
   const [lastSync, setLastSync] = useState(null);
 
-  const showToast = (msg, type="success") => { setToast({msg,type}); setTimeout(()=>setToast(null),3000); };
+  // eslint-disable-next-line no-unused-vars
 
   useEffect(() => {
     if (!user) return;
