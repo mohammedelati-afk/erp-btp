@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { initializeApp } from "firebase/app";
 import { getFirestore, doc, getDoc, setDoc, onSnapshot } from "firebase/firestore";
+import * as XLSX from "xlsx";
 
 // ─── FIREBASE ─────────────────────────────────────────────────────────────────
 const firebaseConfig = {
@@ -270,11 +271,121 @@ function Dashboard({ data, user }) {
 }
 
 // ─── MARCHÉS ──────────────────────────────────────────────────────────────────
+function FicheMarche({ marche, data, onClose }) {
+  const depenses = data.depenses.filter(d => d.marcheId === marche.id);
+  const decomptes = data.decomptes.filter(d => d.marcheId === marche.id);
+  const totalDep = depenses.reduce((s,d) => s+d.montant, 0);
+  const totalDC  = decomptes.filter(d => d.statut==="Payé").reduce((s,d) => s+d.montant, 0);
+  const today = new Date();
+  const dateFin = new Date(marche.dateFin);
+  const joursRestants = Math.ceil((dateFin - today) / (1000*60*60*24));
+  const catC = { "Main d'œuvre":"#7c3aed","Matériaux":"#2563eb","Électricité":"#f59e0b","Plomberie":"#0891b2","Équipement":"#06b6d4","Transport":"#16a34a","Sous-traitance":"#ea580c","Divers":"#64748b" };
+
+  return (
+    <Modal title={`Fiche marché — ${marche.ref}`} onClose={onClose} wide>
+      {/* Alerte délai */}
+      {joursRestants <= 30 && marche.statut !== "Terminé" && (
+        <div style={{ background: joursRestants <= 0 ? "#fee2e2" : "#fef9c3", border:`1px solid ${joursRestants<=0?"#dc2626":"#f59e0b"}`, borderRadius:8, padding:"10px 14px", marginBottom:16, display:"flex", alignItems:"center", gap:8 }}>
+          <Ic d={IC.alert} s={16} c={joursRestants<=0?"#dc2626":"#a16207"}/>
+          <span style={{ fontSize:13, fontWeight:600, color: joursRestants<=0?"#dc2626":"#a16207" }}>
+            {joursRestants <= 0 ? `Délai dépassé de ${Math.abs(joursRestants)} jours !` : `Délai expire dans ${joursRestants} jours !`}
+          </span>
+        </div>
+      )}
+
+      {/* Infos générales */}
+      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:16 }}>
+        {[
+          ["Intitulé", marche.titre],
+          ["Maître d'ouvrage", marche.maitreOuvrage],
+          ["MOD", marche.maitreOuvrageDelegue||"—"],
+          ["Responsable", marche.responsable],
+          ["Montant marché", fmt(marche.montant)],
+          ["Statut", marche.statut],
+          ["Date ouverture plis", marche.dateOuverturePlis],
+          ["Délai d'exécution", marche.delaiExecution+" mois"],
+          ["Date début", marche.dateDebut],
+          ["Date fin", marche.dateFin],
+          ["Caution provisoire", fmt(marche.cautionProvisoire||0)],
+          ["Caution définitive", fmt(marche.cautionDefinitive||0)],
+        ].map(([l,v]) => (
+          <div key={l} style={{ background:"#f8fafc", borderRadius:7, padding:"8px 12px" }}>
+            <div style={{ fontSize:10, color:"#94a3b8", fontWeight:700, textTransform:"uppercase" }}>{l}</div>
+            <div style={{ fontSize:13, fontWeight:600, color:"#1e293b", marginTop:2 }}>{v}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* KPIs */}
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:10, marginBottom:20 }}>
+        <div style={{ background:"#fef2f2", borderRadius:8, padding:12 }}>
+          <div style={{ fontSize:10, color:"#94a3b8" }}>Total dépenses</div>
+          <div style={{ fontSize:16, fontWeight:800, color:"#dc2626" }}>{fmtM(totalDep)}</div>
+        </div>
+        <div style={{ background:"#f0fdf4", borderRadius:8, padding:12 }}>
+          <div style={{ fontSize:10, color:"#94a3b8" }}>Acomptes encaissés</div>
+          <div style={{ fontSize:16, fontWeight:800, color:"#16a34a" }}>{fmtM(totalDC)}</div>
+        </div>
+        <div style={{ background:"#eff6ff", borderRadius:8, padding:12 }}>
+          <div style={{ fontSize:10, color:"#94a3b8" }}>Avancement</div>
+          <div style={{ fontSize:16, fontWeight:800, color:"#2563eb" }}>{marche.avancement}%</div>
+        </div>
+      </div>
+
+      {/* Historique décomptes */}
+      <h4 style={{ margin:"0 0 8px", fontSize:13, color:"#1e293b" }}>📋 Historique des décomptes</h4>
+      {decomptes.length === 0 ? <p style={{ fontSize:12, color:"#94a3b8", marginBottom:16 }}>Aucun décompte.</p> :
+        <table style={{ width:"100%", borderCollapse:"collapse", marginBottom:18, fontSize:12 }}>
+          <thead><tr style={{ background:"#f8fafc" }}><TH>N°</TH><TH>Période</TH><TH>Montant</TH><TH>Date dépôt</TH><TH>Statut</TH></tr></thead>
+          <tbody>{decomptes.map(dc=><tr key={dc.id}><TD bold color="#2563eb">{dc.numero}</TD><TD>{dc.periode}</TD><TD bold color="#16a34a">{fmt(dc.montant)}</TD><TD>{dc.dateDepot}</TD><td style={{ padding:"8px 12px" }}><Badge s={dc.statut}/></td></tr>)}</tbody>
+        </table>
+      }
+
+      {/* Historique dépenses */}
+      <h4 style={{ margin:"0 0 8px", fontSize:13, color:"#1e293b" }}>💸 Historique des dépenses</h4>
+      {depenses.length === 0 ? <p style={{ fontSize:12, color:"#94a3b8" }}>Aucune dépense.</p> :
+        <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
+          <thead><tr style={{ background:"#f8fafc" }}><TH>Date</TH><TH>Catégorie</TH><TH>Description</TH><TH>Fournisseur</TH><TH>Montant</TH><TH>Statut</TH></tr></thead>
+          <tbody>{depenses.map(dep=>(
+            <tr key={dep.id}>
+              <TD>{dep.date}</TD>
+              <td style={{ padding:"8px 12px" }}><span style={{ background:(catC[dep.categorie]||"#64748b")+"22", color:catC[dep.categorie]||"#64748b", padding:"2px 7px", borderRadius:99, fontSize:11, fontWeight:600 }}>{dep.categorie}</span></td>
+              <TD>{dep.description}</TD>
+              <TD>{dep.fournisseur}</TD>
+              <TD bold color="#dc2626">{fmt(dep.montant)}</TD>
+              <td style={{ padding:"8px 12px" }}><Badge s={dep.statut}/></td>
+            </tr>
+          ))}</tbody>
+          <tfoot><tr style={{ background:"#f8fafc" }}>
+            <td colSpan={4} style={{ padding:"8px 12px", fontWeight:700, fontSize:12 }}>TOTAL</td>
+            <td style={{ padding:"8px 12px", fontWeight:700, fontSize:12, color:"#dc2626" }}>{fmt(totalDep)}</td>
+            <td/>
+          </tr></tfoot>
+        </table>
+      }
+    </Modal>
+  );
+}
+
 function Marches({ data, setData, user, addLog, showToast }) {
   const canEdit = user.role==="admin"||user.role==="chef";
   const [modal, setModal] = useState(null);
   const [form, setForm] = useState({});
+  const [fiche, setFiche] = useState(null);
   const sf = k => e => setForm(f => ({ ...f, [k]: e.target.value }));
+
+  // Alertes délai
+  useEffect(() => {
+    const today = new Date();
+    data.marches.forEach(m => {
+      if (m.statut === "Terminé") return;
+      const fin = new Date(m.dateFin);
+      const jours = Math.ceil((fin - today) / (1000*60*60*24));
+      if (jours <= 30) {
+        console.log(`ALERTE: Marché ${m.ref} expire dans ${jours} jours`);
+      }
+    });
+  }, [data.marches]);
 
   const blank = { ref:"",titre:"",maitreOuvrage:"",maitreOuvrageDelegue:"",responsable:"",montant:"",statut:"Signé",dateDebut:"",dateFin:"",dateOuverturePlis:"",delaiExecution:"",cautionProvisoire:"",cautionDefinitive:"",avancement:0 };
   const openNew  = () => { setForm(blank); setModal("new"); };
@@ -326,14 +437,19 @@ function Marches({ data, setData, user, addLog, showToast }) {
                 </div>
               </td>
               <td style={{ padding:"10px 12px" }}><Badge s={m.statut}/></td>
-              <td style={{ padding:"10px 12px" }}>{canEdit&&<div style={{ display:"flex",gap:4 }}>
-                <Btn sm v="ghost" onClick={()=>openEdit(m)}><Ic d={IC.edit} s={12}/></Btn>
-                <Btn sm v="danger" onClick={()=>del(m.id)}><Ic d={IC.trash} s={12}/></Btn>
-              </div>}</td>
+              <td style={{ padding:"10px 12px" }}>
+                <div style={{ display:"flex", gap:4 }}>
+                  <Btn sm v="primary" onClick={()=>setFiche(m)} title="Voir fiche"><Ic d={IC.history} s={12} c="#fff"/></Btn>
+                  {canEdit&&<><Btn sm v="ghost" onClick={()=>openEdit(m)}><Ic d={IC.edit} s={12}/></Btn>
+                  <Btn sm v="danger" onClick={()=>del(m.id)}><Ic d={IC.trash} s={12}/></Btn></>}
+                </div>
+              </td>
             </tr>
           ))}</tbody>
         </table>
       </div>
+
+      {fiche && <FicheMarche marche={fiche} data={data} onClose={()=>setFiche(null)}/>}
 
       {modal&&canEdit&&(
         <Modal title={modal==="new"?"Nouveau marché":"Modifier le marché"} onClose={()=>setModal(null)} wide>
@@ -498,36 +614,42 @@ function Depenses({ data, setData, user, addLog, showToast }) {
   };
   const del = id => { const dep=data.depenses.find(x=>x.id===id); if(window.confirm("Supprimer ?")){ setData(d=>({...d,depenses:d.depenses.filter(x=>x.id!==id)})); addLog(`Suppression dépense — ${dep?.description}`); } };
 
-  // Import Excel/CSV
+  // Import Excel/CSV avec SheetJS
   const handleImport = e => {
     const file = e.target.files[0]; if (!file) return;
     const reader = new FileReader();
     reader.onload = ev => {
-      const text = ev.target.result;
-      const lines = text.split("\n").filter(l => l.trim());
-      const rows = lines.slice(1); // skip header
-      const imported = rows.map((row, i) => {
-        const cols = row.split(/[;\t,]/).map(c => c.trim().replace(/^"|"$/g,""));
-        return {
-          id: Date.now() + i,
-          marcheId: +form.marcheId || data.marches[0]?.id || 1,
-          date: cols[0] || "",
-          description: cols[1] || "",
-          montant: parseFloat(cols[2]?.replace(/\s/g,"").replace(",",".")) || 0,
-          modePaiement: cols[3] || "—",
-          observation: cols[4] || "",
-          categorie: "Matériaux",
-          sousCat: "Autre",
-          fournisseur: "—",
-          statut: "Non payé",
-          datePaiement: "",
-        };
-      }).filter(r => r.montant > 0);
-      setData(d => ({ ...d, depenses: [...d.depenses, ...imported] }));
-      addLog(`Import Excel : ${imported.length} dépenses`);
-      showToast(`${imported.length} dépenses importées !`);
+      try {
+        const data_wb = new Uint8Array(ev.target.result);
+        const workbook = XLSX.read(data_wb, { type: "array" });
+        const sheet = workbook.Sheets[workbook.SheetNames[0]];
+        const rows = XLSX.utils.sheet_to_json(sheet, { header:1, defval:"" });
+        const dataRows = rows.slice(1).filter(r => r.some(c => c !== ""));
+        const imported = dataRows.map((cols, i) => {
+          const montantRaw = String(cols[2]||"").replace(/\s/g,"").replace(",",".");
+          return {
+            id: Date.now() + i,
+            marcheId: data.marches[0]?.id || 1,
+            date: cols[0] ? String(cols[0]) : "",
+            description: String(cols[1]||""),
+            montant: parseFloat(montantRaw) || 0,
+            modePaiement: String(cols[3]||"—"),
+            observation: String(cols[4]||""),
+            categorie: "Matériaux",
+            sousCat: "Autre",
+            fournisseur: "—",
+            statut: "Non payé",
+            datePaiement: "",
+          };
+        }).filter(r => r.montant > 0);
+        setData(d => ({ ...d, depenses: [...d.depenses, ...imported] }));
+        addLog(`Import Excel : ${imported.length} dépenses`);
+        showToast(`${imported.length} dépenses importées !`);
+      } catch(err) {
+        showToast("Erreur lecture fichier Excel", "error");
+      }
     };
-    reader.readAsText(file, "utf-8");
+    reader.readAsArrayBuffer(file);
     e.target.value = "";
   };
 
@@ -559,13 +681,19 @@ function Depenses({ data, setData, user, addLog, showToast }) {
       </div>
 
       {/* Summary */}
-      <div style={{ display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:11,marginBottom:16 }}>
-        {["Main d'œuvre","Matériaux","Électricité","Plomberie"].map(cat => (
-          <div key={cat} style={{ background:"#fff",borderRadius:9,padding:12,border:"1px solid #f1f5f9" }}>
-            <div style={{ fontSize:10,color:"#94a3b8" }}>{cat}</div>
-            <div style={{ fontSize:15,fontWeight:800,color:catC[cat]||"#374151" }}>{fmtM(data.depenses.filter(d=>d.categorie===cat).reduce((s,d)=>s+d.montant,0))}</div>
-          </div>
-        ))}
+      <div style={{ display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:11,marginBottom:16 }}>
+        <div style={{ background:"#fef2f2",borderRadius:9,padding:14,border:"1px solid #fee2e2" }}>
+          <div style={{ fontSize:11,color:"#94a3b8",marginBottom:4 }}>Total dépenses</div>
+          <div style={{ fontSize:18,fontWeight:800,color:"#dc2626" }}>{fmtM(data.depenses.reduce((s,d)=>s+d.montant,0))}</div>
+        </div>
+        <div style={{ background:"#f0fdf4",borderRadius:9,padding:14,border:"1px solid #dcfce7" }}>
+          <div style={{ fontSize:11,color:"#94a3b8",marginBottom:4 }}>Total payé</div>
+          <div style={{ fontSize:18,fontWeight:800,color:"#16a34a" }}>{fmtM(data.depenses.filter(d=>d.statut==="Payé").reduce((s,d)=>s+d.montant,0))}</div>
+        </div>
+        <div style={{ background:"#f5f3ff",borderRadius:9,padding:14,border:"1px solid #ede9fe" }}>
+          <div style={{ fontSize:11,color:"#94a3b8",marginBottom:4 }}>Chèques en attente</div>
+          <div style={{ fontSize:18,fontWeight:800,color:"#7c3aed" }}>{fmtM(data.depenses.filter(d=>d.statut==="Chèque déposé").reduce((s,d)=>s+d.montant,0))}</div>
+        </div>
       </div>
 
       {/* Filters */}
@@ -597,10 +725,14 @@ function Depenses({ data, setData, user, addLog, showToast }) {
                   {dep.datePaiement && <div style={{ fontSize:10,color:"#94a3b8" }}>{dep.datePaiement}</div>}
                 </td>
                 <td style={{ padding:"10px 12px" }}><Badge s={dep.statut}/></td>
-                <td style={{ padding:"10px 12px" }}>{canEdit&&<div style={{ display:"flex",gap:4 }}>
-                  <Btn sm v="ghost" onClick={()=>openEdit(dep)}><Ic d={IC.edit} s={12}/></Btn>
-                  <Btn sm v="danger" onClick={()=>del(dep.id)}><Ic d={IC.trash} s={12}/></Btn>
-                </div>}</td>
+                <td style={{ padding:"10px 12px" }}>
+                  <div style={{ display:"flex",gap:4 }}>
+                    {canEdit && <>
+                      <Btn sm v="ghost" onClick={()=>openEdit(dep)}><Ic d={IC.edit} s={12}/></Btn>
+                      <Btn sm v="danger" onClick={()=>del(dep.id)}><Ic d={IC.trash} s={12}/></Btn>
+                    </>}
+                  </div>
+                </td>
               </tr>
             );
           })}</tbody>
