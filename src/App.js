@@ -211,16 +211,25 @@ function Login({ onLogin }) {
 
 // ─── DASHBOARD ────────────────────────────────────────────────────────────────
 function Dashboard({ data, user }) {
-  const totalM  = data.marches.reduce((s,m) => s+m.montant, 0);
-  const totalD  = data.depenses.reduce((s,d) => s+d.montant, 0);
-  const totalDC = data.decomptes.filter(d => d.statut==="Payé").reduce((s,d) => s+d.montant, 0);
-  const actifs  = data.marches.filter(m => m.statut==="En cours").length;
+  // Marchés en cours
+  const marchesEnCours = data.marches.filter(m => m.statut==="En cours");
+  const nbEnCours      = marchesEnCours.length;
+  const montantEnCours = marchesEnCours.reduce((s,m) => s+m.montant, 0);
+
+  // Dépenses liées aux marchés en cours
+  const idsEnCours   = marchesEnCours.map(m => m.id);
+  const depEnCours   = data.depenses.filter(d => idsEnCours.includes(d.marcheId)).reduce((s,d) => s+d.montant, 0);
+
+  // Décomptes non payés des marchés réceptionnés (Terminé)
+  const marchesTermines = data.marches.filter(m => m.statut==="Terminé").map(m => m.id);
+  const dcNonPayes      = data.decomptes.filter(d => marchesTermines.includes(d.marcheId) && d.statut!=="Payé").reduce((s,d) => s+d.montant, 0);
+
   const recentLog = [...(data.log||[])].reverse().slice(0,8);
   const cards = [
-    { label:"Volume marchés",      val:fmtM(totalM),  ic:IC.marches,   c:"#2563eb",bg:"#eff6ff" },
-    { label:"Acomptes encaissés",  val:fmtM(totalDC), ic:IC.decomptes, c:"#16a34a",bg:"#f0fdf4" },
-    { label:"Dépenses totales",    val:fmtM(totalD),  ic:IC.depenses,  c:"#dc2626",bg:"#fef2f2" },
-    { label:"Marchés actifs",      val:actifs,         ic:IC.building,  c:"#7c3aed",bg:"#f5f3ff" },
+    { label:"Marchés en cours",              val:nbEnCours,            ic:IC.building,  c:"#2563eb",bg:"#eff6ff", sub:"marchés actifs" },
+    { label:"Montant marchés en cours",      val:fmtM(montantEnCours), ic:IC.marches,   c:"#7c3aed",bg:"#f5f3ff", sub:"valeur totale" },
+    { label:"Dépenses marchés en cours",     val:fmtM(depEnCours),     ic:IC.depenses,  c:"#dc2626",bg:"#fef2f2", sub:"charges en cours" },
+    { label:"Décomptes non payés (clôturés)",val:fmtM(dcNonPayes),     ic:IC.decomptes, c:"#f59e0b",bg:"#fffbeb", sub:"à encaisser" },
   ];
   return (
     <div>
@@ -232,7 +241,11 @@ function Dashboard({ data, user }) {
         {cards.map((c,i) => (
           <div key={i} style={{ background:"#fff",borderRadius:12,padding:17,border:"1px solid #f1f5f9",boxShadow:"0 1px 4px rgba(0,0,0,0.05)" }}>
             <div style={{ display:"flex",justifyContent:"space-between",alignItems:"flex-start" }}>
-              <div><div style={{ fontSize:11,color:"#94a3b8",marginBottom:5 }}>{c.label}</div><div style={{ fontSize:19,fontWeight:800,color:"#1e293b" }}>{c.val}</div></div>
+              <div>
+                <div style={{ fontSize:11,color:"#94a3b8",marginBottom:5 }}>{c.label}</div>
+                <div style={{ fontSize:19,fontWeight:800,color:"#1e293b" }}>{c.val}</div>
+                <div style={{ fontSize:10,color:"#94a3b8",marginTop:3 }}>{c.sub}</div>
+              </div>
               <div style={{ background:c.bg,borderRadius:9,padding:9 }}><Ic d={c.ic} c={c.c} s={19}/></div>
             </div>
           </div>
@@ -599,6 +612,7 @@ function Depenses({ data, setData, user, addLog, showToast }) {
   const [form, setForm] = useState({});
   const [filtreCat, setFiltreCat] = useState("Tous");
   const [filtreStatut, setFiltreStatut] = useState("Tous");
+  const [filtreMarche, setFiltreMarche] = useState("Tous");
   const importRef = useRef();
   const sf = k => e => setForm(f => ({ ...f, [k]: e.target.value }));
 
@@ -654,6 +668,7 @@ function Depenses({ data, setData, user, addLog, showToast }) {
   };
 
   const filtered = data.depenses
+    .filter(d => filtreMarche==="Tous" || d.marcheId===+filtreMarche)
     .filter(d => filtreCat==="Tous" || d.categorie===filtreCat)
     .filter(d => filtreStatut==="Tous" || d.statut===filtreStatut);
 
@@ -697,6 +712,14 @@ function Depenses({ data, setData, user, addLog, showToast }) {
       </div>
 
       {/* Filters */}
+      <div style={{ display:"flex",gap:6,marginBottom:8,flexWrap:"wrap",alignItems:"center" }}>
+        <span style={{ fontSize:11,color:"#94a3b8",fontWeight:600 }}>Marché:</span>
+        {["Tous",...data.marches.map(m=>m.id)].map(id => {
+          const m = data.marches.find(x=>x.id===id);
+          const label = id==="Tous" ? "Tous" : m?.ref||id;
+          return <button key={id} onClick={()=>setFiltreMarche(id)} style={{ padding:"3px 11px",borderRadius:99,border:"1px solid",fontSize:11,cursor:"pointer",fontWeight:filtreMarche===id?700:400,background:filtreMarche===id?"#0f172a":"#fff",color:filtreMarche===id?"#fff":"#64748b",borderColor:filtreMarche===id?"#0f172a":"#e2e8f0" }}>{label}</button>;
+        })}
+      </div>
       <div style={{ display:"flex",gap:6,marginBottom:12,flexWrap:"wrap",alignItems:"center" }}>
         <span style={{ fontSize:11,color:"#94a3b8",fontWeight:600 }}>Catégorie:</span>
         {["Tous",...CATS].map(c=><button key={c} onClick={()=>setFiltreCat(c)} style={{ padding:"3px 11px",borderRadius:99,border:"1px solid",fontSize:11,cursor:"pointer",fontWeight:filtreCat===c?700:400,background:filtreCat===c?"#2563eb":"#fff",color:filtreCat===c?"#fff":"#64748b",borderColor:filtreCat===c?"#2563eb":"#e2e8f0" }}>{c}</button>)}
